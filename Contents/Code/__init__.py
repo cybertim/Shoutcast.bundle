@@ -10,6 +10,8 @@ SC_ALLGENRES     = SC_ROOT + 'legacy/genrelist?k=' + SC_DEVID
 SC_PRIMARYGENRES = SC_ROOT + 'genre/primary?k=' + SC_DEVID + '&f=xml'
 SC_SUBGENRES     = SC_ROOT + 'genre/secondary?parentid=%s&k=' + SC_DEVID + '&f=xml'
 SC_PLAY          = 'http://yp.shoutcast.com/sbin/tunein-station.pls?id=%s&k='+ SC_DEVID
+SC_ICON_ADD_FAVORITE = 'add_favorite.png'
+SC_ICON_DEL_FAVORITE = 'del_favorite.png'
 
 ####################################################################################################
 def Start():
@@ -23,6 +25,7 @@ def CreateDict():
 	# Create dict objects
 	Dict['genres'] = {}
 	Dict['sortedGenres'] = []
+	Dict['favorites'] = []
 
 ####################################################################################################
 def UpdateCache():
@@ -47,6 +50,7 @@ def UpdateCache():
 def MainMenu():
 
 	oc = ObjectContainer()
+	oc.add(DirectoryObject(key=Callback(Favorites), title="Favorites"))
 	oc.add(DirectoryObject(key=Callback(GetGenres), title=L('By Genre')))
 	oc.add(InputDirectoryObject(key=Callback(GetGenre, title="", queryParamName=SC_SEARCH), title=L("Search for Stations by Keyword..."), prompt=L("Search for Stations")))
 	oc.add(InputDirectoryObject(key=Callback(GetGenre, title="Now Playing", queryParamName=SC_NOWPLAYING), title=L("Search for Now Playing by Keyword..."), prompt=L("Search for Now Playing")))
@@ -160,18 +164,17 @@ def GetGenre(title, queryParamName=SC_BYGENRE, query=''):
 
 		# Filter.
 		if bitrate >= min_bitrate:
-			oc.add(CreateTrackObject(
-				url = url,
+			oc.add(DirectoryObject(
+				key = Callback(CreateTrackMenu, sub_title=title, url=url, title=title, summary=summary, fmt=fmt),
 				title = title,
-				summary = summary,
-				fmt = fmt
+				summary = summary,		
 			))
 
 	return oc
 
 ####################################################################################################
 @route("/music/shoutcast/track")
-def CreateTrackObject(url, title, summary, fmt, include_container=False):
+def CreateTrackMenu(sub_title, url, title, summary, fmt):
 
 	if fmt == 'mp3':
 		container = Container.MP3
@@ -180,10 +183,11 @@ def CreateTrackObject(url, title, summary, fmt, include_container=False):
 		container = Container.MP4
 		audio_codec = AudioCodec.AAC
 
+
 	track_object = TrackObject(
-		key = Callback(CreateTrackObject, url=url, title=title, summary=summary, fmt=fmt, include_container=True),
+		key = Callback(CreateTrackMenu, sub_title=sub_title, url=url, title=title, summary=summary, fmt=fmt),
 		rating_key = url,
-		title = title,
+		title = 'Start Playback',
 		summary = summary,
 		items = [
 			MediaObject(
@@ -197,11 +201,27 @@ def CreateTrackObject(url, title, summary, fmt, include_container=False):
 			)
 		]
 	)
+	
+	favorite_object = DirectoryObject(
+		key = Callback(AddFavorite, url=url, title=title, summary=summary, fmt=fmt),
+		title = "Add Favorites",
+		summary = "You can add " + title + " to your Favorites.",
+		thumb = R(SC_ICON_ADD_FAVORITE)
+	)
+	favorites = Dict['favorites']
+	for favorite in favorites:
+		if favorite['url'] == url:
+			favorite_object = DirectoryObject(
+				key = Callback(DelFavorite, url=url, title=title),
+				title = "Remove Favorites",
+				summary = "You can remove " + title + " from your Favorites.",
+				thumb = R(SC_ICON_DEL_FAVORITE)
+			)
 
-	if include_container:
-		return ObjectContainer(objects=[track_object])
-	else:
-		return track_object
+	oc = ObjectContainer(title1=sub_title, title2=title, replace_parent=True, no_cache=True)
+	oc.add(track_object)
+	oc.add(favorite_object)
+	return oc
 
 ####################################################################################################
 def PlayAudio(url):
@@ -218,3 +238,79 @@ def PlayAudio(url):
 		return Redirect(stream_url)
 	else:
 		raise Ex.MediaNotAvailable
+
+####################################################################################################
+def GetFavorites(oc):
+
+	if Dict['favorites'] == None:
+		Dict['favorites'] = []
+
+	#oc = ObjectContainer(title1='Favorites', no_cache=True)
+	favorites = Dict['favorites']
+
+	for favorite in favorites:
+		oc.add(DirectoryObject(
+			key = Callback(CreateTrackMenu, sub_title='Favorites', url=favorite['url'], title=favorite['title'], summary=favorite['summary'], fmt=favorite['fmt']),
+			title = favorite['title'],
+			summary = favorite['summary'],		
+		))		
+
+	return oc
+
+
+#####################################################################################
+# Favorites
+#####################################################################################
+@route('/music/shoutcast/favorites')
+def Favorites():
+
+	oc = ObjectContainer(title1='Favorites')
+	return GetFavorites(oc)
+
+#####################################################################################
+# Add Favorite
+##################################################################################### 
+@route('/music/shoutcast/addfavorite')
+def AddFavorite(url, title, summary, fmt):
+	
+	oc = ObjectContainer(title1='Favorites', header=title, message='The station has been added to your favorites.')
+
+	if Dict['favorites'] == None:
+		Dict['favorites'] = []
+
+	favorite = {}
+	favorite['title'] = title
+	favorite['url'] = url
+	favorite['summary'] = summary
+	favorite['fmt'] = fmt
+
+	Dict['favorites'].append(favorite)
+
+	Dict.Save()
+
+	return GetFavorites(oc)
+
+#####################################################################################
+# Add Favorite
+##################################################################################### 
+@route('/music/shoutcast/delfavorite')
+def DelFavorite(url, title):
+
+	oc = ObjectContainer(title1='Favorites', header=title, message='The station has been removed from your favorites.')
+
+	if Dict['favorites'] == None:
+		Dict['favorites'] = []
+
+	favorites = Dict['favorites']
+
+	fav_item = None
+	for favorite in favorites:
+		if favorite['url'] == url:
+			fav_item = favorite
+
+	if fav_item != None:
+		Dict['favorites'].remove(fav_item)
+
+	Dict.Save()
+
+	return GetFavorites(oc)
